@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: turing-worker
+  namespace: turing-cluster
+  labels:
+    app: turing-worker
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: turing-worker
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: turing-worker
+    spec:
+      # Must exceed the server's 30s graceful shutdown window.
+      terminationGracePeriodSeconds: 35
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534  # nobody — safe default for scratch images
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          # Build: docker build -t ghcr.io/russellwallace/turing-cluster/worker:latest .
+          # Push:  docker push ghcr.io/russellwallace/turing-cluster/worker:latest
+          # Local (minikube): eval $(minikube docker-env) && docker build ... then set
+          #   imagePullPolicy: Never below.
+          image: ghcr.io/russellwallace/turing-cluster/worker:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: PORT
+              value: "8080"
+          resources:
+            requests:
+              # Workers are CPU-bound (running TM steps); give each a meaningful
+              # share so the scheduler places them on nodes with headroom.
+              cpu: 500m
+              memory: 64Mi
+            limits:
+              cpu: "2"
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            failureThreshold: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

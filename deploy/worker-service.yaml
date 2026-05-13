@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: turing-worker
+  namespace: turing-cluster
+  labels:
+    app: turing-worker
+spec:
+  type: ClusterIP
+  selector:
+    app: turing-worker
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
