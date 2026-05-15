@@ -33,8 +33,8 @@ spec:
           # Push:  docker push ghcr.io/russellwallace/turing-cluster/worker:latest
           # Local (minikube): eval $(minikube docker-env) && docker build ... then set
           #   imagePullPolicy: Never below.
-          image: ghcr.io/russellwallace/turing-cluster/worker:latest
-          imagePullPolicy: Always
+          image: worker:latest
+          imagePullPolicy: Never
           ports:
             - name: http
               containerPort: 8080
