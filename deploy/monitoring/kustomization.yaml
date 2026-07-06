@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Applied AFTER kube-prometheus-stack is installed (the ServiceMonitors need the
+# Prometheus Operator CRDs). Kept out of the root deploy/ kustomization for that
+# reason — see README.md in this directory.
+resources:
+  - pushgateway.yaml
+  - servicemonitor-worker.yaml
+  - servicemonitor-pushgateway.yaml
+  - grafana-dashboard.yaml

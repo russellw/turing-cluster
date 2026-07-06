@@ -73,9 +73,10 @@ Key properties this buys us, each mapping to a K8s skill:
   Grafana dashboard as a ConfigMap. *Alternative:* hand-rolled Prometheus +
   Grafana Deployments if we want to avoid Helm and keep everything in Kustomize.
 
-**Open decisions to confirm before Phase 4/5:** KEDA vs Prometheus Adapter;
-kube-prometheus-stack (Helm) vs hand-rolled manifests; coordinator as a `Job`
-(runs once to completion) vs a long-lived `Deployment`. Defaults above.
+**Decisions (resolved in Phase 4):** kube-prometheus-stack (Helm) — done;
+coordinator stays a run-once `Job`, with its metrics pushed to a **Pushgateway**
+rather than scraped. **Still open (Phase 5):** KEDA vs Prometheus Adapter for the
+queue-depth autoscaler. Defaults above.
 
 ---
 
@@ -253,10 +254,23 @@ sessions. Ordered so infra can be validated before app code depends on it.
   reliably capturing it needs a Pushgateway (or a long-lived coordinator), which
   Phase 4 must decide. The always-on, dashboard-driving signal is the worker's.
 
-- **Phase 4 — Prometheus + Grafana.** Install kube-prometheus-stack; add
-  ServiceMonitors + dashboard ConfigMap. Verify: targets UP in Prometheus; the
-  dashboard renders steps/sec and queue depth during a search. *(Portfolio
-  screenshot lives here.)*
+- **Phase 4 — Prometheus + Grafana. ✅ done 2026-07-06.** Installed
+  kube-prometheus-stack (lean: Prometheus + Grafana + operator; values in
+  `deploy/monitoring/kube-prometheus-stack-values.yaml`, scrapes all
+  ServiceMonitors, Grafana dashboard sidecar `searchNamespace: ALL`). Added
+  `deploy/monitoring/`: worker ServiceMonitor, a **Pushgateway** (Deployment +
+  Service + ServiceMonitor) that resolves the deferred coordinator-metrics
+  question, and the dashboard ConfigMap. The coordinator now pushes its final
+  summary to the gateway (`-pushgateway` / `PUSHGATEWAY_ADDR`, `push` package —
+  no new dep). Verified: all targets UP (3 worker pods + pushgateway); Prometheus
+  answers `turing_champion_steps=6`, `turing_champion_sigma=4`,
+  `turing_batches_enqueued_total=42`, `count(turing_worker_busy)=3`; Grafana
+  imported the dashboard at `/d/turing-cluster/` (9 panels) with a healthy
+  Prometheus datasource. Monitoring manifests are kept out of the root kustomize
+  (they need the operator CRDs first) — applied via `kubectl apply -k
+  deploy/monitoring/` after the Helm install; see `deploy/monitoring/README.md`.
+  **Decision recorded:** worker metrics are scraped (always-on, drive the
+  dashboard); the run-once coordinator uses the Pushgateway batch-job pattern.
 
 - **Phase 5 — KEDA.** Install KEDA; add the ScaledObject; remove/demote the CPU
   HPA. Verify: enqueue a large-n batch load and watch replicas scale up on lag

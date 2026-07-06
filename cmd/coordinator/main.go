@@ -35,6 +35,7 @@ func main() {
 		redisAddr   = flag.String("redis", os.Getenv("REDIS_ADDR"), "redis host:port; if set, distribute work via the queue instead of HTTP fan-out")
 		batchSize   = flag.Int64("batch", envInt64("BATCH_SIZE", 500), "machines per queued batch (queue mode)")
 		metricsAddr = flag.String("metrics-addr", envOr("METRICS_ADDR", ":2112"), "address to serve Prometheus /metrics on in queue mode; empty to disable")
+		pushgateway = flag.String("pushgateway", os.Getenv("PUSHGATEWAY_ADDR"), "Prometheus Pushgateway host:port; if set, push the final run summary there")
 		states      = flag.Int("states", 2, "number of machine states to enumerate")
 		maxSteps    = flag.Int64("max-steps", 1000, "per-candidate step limit; machines that don't halt within it are treated as non-halters")
 		concurrency = flag.Int("concurrency", 16, "number of in-flight requests (HTTP fan-out mode)")
@@ -84,6 +85,12 @@ func main() {
 	}
 	if err != nil {
 		fatal(err.Error())
+	}
+
+	// In queue mode, push the final summary to the Pushgateway so a run-once
+	// Job's champions and totals outlive the process and reach the dashboard.
+	if *redisAddr != "" && *pushgateway != "" {
+		pushMetrics(*pushgateway)
 	}
 
 	printReport(os.Stdout, *states, result, time.Since(start))

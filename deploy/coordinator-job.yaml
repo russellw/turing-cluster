@@ -34,6 +34,10 @@ spec:
             - "-states=2"
             - "-batch=500"
             - "-max-steps=1000"
+          env:
+            # Push the final run summary here so it outlives the Job.
+            - name: PUSHGATEWAY_ADDR
+              value: "turing-pushgateway:9091"
           ports:
             # Prometheus /metrics, served only while the search runs. Reliably
             # scraping a run-once Job needs a Pushgateway (Phase 4 decision).

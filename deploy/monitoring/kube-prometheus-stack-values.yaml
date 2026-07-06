@@ -1,0 +1,54 @@
+# Lean kube-prometheus-stack for the turing-cluster portfolio demo:
+# Prometheus + Grafana + operator only. The extras (alertmanager, node-exporter,
+# kube-state-metrics) aren't needed for our dashboard and slow the pull on kind.
+alertmanager:
+  enabled: false
+nodeExporter:
+  enabled: false
+kubeStateMetrics:
+  enabled: false
+kube-state-metrics:
+  enabled: false
+prometheus-node-exporter:
+  enabled: false
+
+prometheusOperator:
+  admissionWebhooks:
+    enabled: false
+  tls:
+    enabled: false
+
+prometheus:
+  prometheusSpec:
+    # Scrape every ServiceMonitor/PodMonitor in the cluster, not just those
+    # labelled with the release name.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    retention: 2h
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 768Mi
+
+grafana:
+  adminPassword: admin
+  sidecar:
+    dashboards:
+      enabled: true
+      # Load dashboard ConfigMaps from any namespace (ours live in turing-cluster).
+      searchNamespace: ALL
+      label: grafana_dashboard
+    datasources:
+      enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi

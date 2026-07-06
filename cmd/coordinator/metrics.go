@@ -6,6 +6,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/prometheus/client_golang/prometheus/push"
 )
 
 // serveMetrics starts a background HTTP server exposing GET /metrics. It runs for
@@ -20,6 +21,21 @@ func serveMetrics(addr string) {
 			slog.Error("metrics server error", "err", err)
 		}
 	}()
+}
+
+// pushMetrics sends the coordinator's current metrics to a Prometheus
+// Pushgateway. Because the coordinator is a run-once Job, its own /metrics
+// endpoint dies with it; pushing the final summary to the gateway is the
+// standard way to make a batch job's metrics outlive it and land on the
+// dashboard.
+func pushMetrics(addr string) {
+	if err := push.New(addr, "turing_coordinator").
+		Gatherer(prometheus.DefaultGatherer).
+		Push(); err != nil {
+		slog.Warn("push to pushgateway failed", "addr", addr, "err", err)
+		return
+	}
+	slog.Info("pushed metrics to pushgateway", "addr", addr)
 }
 
 // Coordinator metrics. NOTE: the coordinator runs as a run-once Job, so this

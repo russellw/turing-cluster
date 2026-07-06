@@ -1,0 +1,137 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: turing-cluster-dashboard
+  namespace: turing-cluster
+  labels:
+    # The kube-prometheus-stack Grafana sidecar imports ConfigMaps with this
+    # label (searchNamespace: ALL) as dashboards.
+    grafana_dashboard: "1"
+data:
+  turing-cluster.json: |
+    {
+      "uid": "turing-cluster",
+      "title": "Turing Cluster — Busy Beaver Search",
+      "tags": ["turing-cluster"],
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "refresh": "10s",
+      "time": { "from": "now-15m", "to": "now" },
+      "templating": { "list": [] },
+      "annotations": { "list": [] },
+      "panels": [
+        {
+          "type": "row", "title": "Throughput", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+        },
+        {
+          "type": "timeseries", "title": "Steps / sec (fleet)",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+          "fieldConfig": { "defaults": { "unit": "ops", "custom": { "fillOpacity": 20, "lineWidth": 2 } }, "overrides": [] },
+          "targets": [
+            { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" },
+              "expr": "sum(rate(turing_steps_total[1m]))", "legendFormat": "steps/s" }
+          ]
+        },
+        {
+          "type": "timeseries", "title": "Candidates & halts / sec",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+          "fieldConfig": { "defaults": { "unit": "ops", "custom": { "fillOpacity": 15, "lineWidth": 2 } }, "overrides": [] },
+          "targets": [
+            { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" },
+              "expr": "sum(rate(turing_candidates_total[1m]))", "legendFormat": "candidates/s" },
+            { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" },
+              "expr": "sum(rate(turing_halts_total[1m]))", "legendFormat": "halts/s" }
+          ]
+        },
+        {
+          "type": "row", "title": "Workers & batches", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 }
+        },
+        {
+          "type": "stat", "title": "Busy workers",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 6, "x": 0, "y": 10 },
+          "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" },
+            "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "blue", "value": 1 } ] } }, "overrides": [] },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+          "targets": [
+            { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" },
+              "expr": "sum(turing_worker_busy)", "legendFormat": "busy" }
+          ]
+        },
+        {
+          "type": "timeseries", "title": "Batch duration (p50 / p95)",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 6, "y": 10 },
+          "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [] },
+          "targets": [
+            { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" },
+              "expr": "histogram_quantile(0.50, sum(rate(turing_batch_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50" },
+            { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" },
+              "expr": "histogram_quantile(0.95, sum(rate(turing_batch_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95" }
+          ]
+        },
+        {
+          "type": "stat", "title": "Batches processed / sec",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 10 },
+          "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+          "targets": [
+            { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" },
+              "expr": "sum(rate(turing_batches_processed_total[1m]))", "legendFormat": "batches/s" }
+          ]
+        },
+        {
+          "type": "row", "title": "Last search (pushed by the coordinator Job)", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 }
+        },
+        {
+          "type": "stat", "title": "S(n) — most steps",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 7, "w": 6, "x": 0, "y": 19 },
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+          "targets": [
+            { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" },
+              "expr": "max(turing_champion_steps)", "legendFormat": "S(n)" }
+          ]
+        },
+        {
+          "type": "stat", "title": "sigma(n) — most ones",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 7, "w": 6, "x": 6, "y": 19 },
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+          "targets": [
+            { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" },
+              "expr": "max(turing_champion_sigma)", "legendFormat": "sigma(n)" }
+          ]
+        },
+        {
+          "type": "stat", "title": "Backlog at last sample",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 7, "w": 6, "x": 12, "y": 19 },
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+          "targets": [
+            { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" },
+              "expr": "max(turing_jobs_pending)", "legendFormat": "pending" }
+          ]
+        },
+        {
+          "type": "stat", "title": "Batches enqueued (last run)",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 7, "w": 6, "x": 18, "y": 19 },
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+          "targets": [
+            { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" },
+              "expr": "max(turing_batches_enqueued_total)", "legendFormat": "enqueued" }
+          ]
+        }
+      ]
+    }

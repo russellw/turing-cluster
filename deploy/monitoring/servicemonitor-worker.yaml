@@ -1,0 +1,16 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: turing-worker
+  namespace: turing-cluster
+  labels:
+    app: turing-worker
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app: turing-worker
+  endpoints:
+    - port: http        # the worker Service's named port; /metrics rides it
+      path: /metrics
+      interval: 15s
