@@ -17,7 +17,6 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"math"
 	"net/http"
 	"os"
 	"strings"
@@ -25,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/russellwallace/turing-cluster/pkg/search"
 	"github.com/russellwallace/turing-cluster/pkg/turing"
 )
 
@@ -52,7 +52,7 @@ func main() {
 	}
 
 	// Guard against accidentally enumerating an astronomically large space.
-	total := spaceSize(*states)
+	total := search.SpaceSizeFloat(*states)
 	const threshold = 1e7
 	if total > threshold && !*force {
 		fatal(fmt.Sprintf("search space for %d states is %.0f machines, above the %.0e safety threshold; pass -force to proceed anyway",
@@ -86,30 +86,21 @@ type Config struct {
 	Client      *http.Client
 }
 
-// Champion records the best machine found for a given metric.
-type Champion struct {
-	Program *turing.Program
-	Steps   int64
-	Ones    int
-}
-
-// SearchResult summarises a completed search.
-type SearchResult struct {
-	Total   int // candidates enumerated
-	Halted  int // candidates that halted within the step limit
-	Errored int // candidates whose worker call failed at the machine level
-
-	StepChampion Champion // most steps before halting
-	OnesChampion Champion // most 1s left on the tape
-}
+// SearchResult summarises a completed search. It is the search package's champion
+// accumulator: Total, Halted, StepChampion (S(n)) and OnesChampion (sigma(n)).
+type SearchResult = search.Tally
 
 // Search enumerates every candidate machine and fans it out to the workers,
 // returning the champions once every candidate has been evaluated.
 func Search(ctx context.Context, cfg Config) (SearchResult, error) {
-	alphabet, stateNames := buildAlphabet(cfg.States)
-
 	programs := make(chan *turing.Program)
-	go enumerate(stateNames, alphabet, programs)
+	go func() {
+		defer close(programs)
+		search.Programs(cfg.States, 0, search.SpaceSize(cfg.States), func(_ uint64, p *turing.Program) bool {
+			programs <- p
+			return true
+		})
+	}()
 
 	type outcome struct {
 		prog   *turing.Program
@@ -137,7 +128,7 @@ func Search(ctx context.Context, cfg Config) (SearchResult, error) {
 				o := outcome{prog: prog, halted: resp.Halted, merr: resp.Error}
 				if resp.Snapshot != nil {
 					o.steps = resp.Snapshot.Steps
-					o.ones = countOnes(resp.Snapshot.Tape)
+					o.ones = search.CountOnes(resp.Snapshot.Tape)
 				}
 				outcomes <- o
 			}
@@ -146,27 +137,15 @@ func Search(ctx context.Context, cfg Config) (SearchResult, error) {
 	go func() { wg.Wait(); close(outcomes) }()
 
 	var result SearchResult
-	var processed int
 	for o := range outcomes {
 		if o.terr != nil {
 			return result, fmt.Errorf("worker call failed: %w", o.terr)
 		}
-		result.Total++
-		processed++
-		if o.merr != "" && !o.halted {
-			// Expected for non-halters that hit the step limit.
-		}
-		if o.halted {
-			result.Halted++
-			if o.steps > result.StepChampion.Steps {
-				result.StepChampion = Champion{Program: o.prog, Steps: o.steps, Ones: o.ones}
-			}
-			if o.ones > result.OnesChampion.Ones {
-				result.OnesChampion = Champion{Program: o.prog, Steps: o.steps, Ones: o.ones}
-			}
-		}
-		if processed%2000 == 0 {
-			slog.Info("progress", "evaluated", processed, "halted", result.Halted)
+		// A machine-level error with halted=false is expected: it's a non-halter
+		// that hit the step limit. Add folds it in as a non-halter.
+		result.Add(o.prog, o.halted, o.steps, o.ones)
+		if result.Total%2000 == 0 {
+			slog.Info("progress", "evaluated", result.Total, "halted", result.Halted)
 		}
 	}
 	return result, nil
@@ -212,99 +191,6 @@ func runCandidate(ctx context.Context, client *http.Client, worker string, prog 
 		return runResp{}, err
 	}
 	return out, nil
-}
-
-// transition is one entry in the per-cell alphabet of possible moves.
-type transition struct {
-	write byte
-	move  turing.Direction
-	next  string
-}
-
-// buildAlphabet returns the set of possible transitions for a cell and the
-// state names A, B, C, ... for an n-state machine. A cell may write 0 or 1,
-// move L or R, and transition to any state or HALT.
-func buildAlphabet(states int) ([]transition, []string) {
-	names := make([]string, states)
-	for i := range names {
-		names[i] = string(rune('A' + i))
-	}
-	nexts := append(append([]string{}, names...), turing.Halt)
-
-	var alphabet []transition
-	for _, w := range []byte{0, 1} {
-		for _, mv := range []turing.Direction{turing.Left, turing.Right} {
-			for _, nx := range nexts {
-				alphabet = append(alphabet, transition{write: w, move: mv, next: nx})
-			}
-		}
-	}
-	return alphabet, names
-}
-
-// enumerate streams every complete transition table over the given states and
-// alphabet as a Program. There are len(alphabet)^(2*states) of them. It closes
-// out when done.
-func enumerate(states []string, alphabet []transition, out chan<- *turing.Program) {
-	defer close(out)
-	cells := 2 * len(states) // (state, symbol) pairs
-	k := len(alphabet)
-	assign := make([]int, cells)
-	for {
-		out <- buildProgram(states, alphabet, assign)
-
-		// Increment the mixed-radix odometer over cells.
-		i := 0
-		for ; i < cells; i++ {
-			assign[i]++
-			if assign[i] < k {
-				break
-			}
-			assign[i] = 0
-		}
-		if i == cells {
-			return // rolled over — enumerated everything
-		}
-	}
-}
-
-// buildProgram materialises the Program described by one cell->transition
-// assignment. Cell c encodes state c/2 reading symbol c%2.
-func buildProgram(states []string, alphabet []transition, assign []int) *turing.Program {
-	rules := make([]turing.Rule, len(assign))
-	for cell, ti := range assign {
-		t := alphabet[ti]
-		rules[cell] = turing.Rule{
-			State: states[cell/2],
-			Read:  byte(cell % 2),
-			Write: t.write,
-			Move:  t.move,
-			Next:  t.next,
-		}
-	}
-	return &turing.Program{
-		Name:       "candidate",
-		StartState: states[0],
-		Rules:      rules,
-	}
-}
-
-// countOnes counts the non-blank cells on a snapshot tape. In a 2-symbol
-// machine every non-blank cell holds a 1.
-func countOnes(tape map[int]byte) int {
-	n := 0
-	for _, v := range tape {
-		if v != turing.Blank {
-			n++
-		}
-	}
-	return n
-}
-
-// spaceSize returns the number of candidate machines for an n-state machine.
-func spaceSize(states int) float64 {
-	k := float64(2 * 2 * (states + 1)) // write * move * next
-	return math.Pow(k, float64(2*states))
 }
 
 func splitWorkers(csv string) []string {

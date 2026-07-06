@@ -18,6 +18,8 @@ outward-facing.
 - **REPORT.md** — detailed engineering progress report: what's been built, how it
   was verified, and what's next. Everything that doesn't belong in the other two.
 - **CLAUDE.md** (this file) — guidance for editing the code.
+- **docs/DESIGN-queue-observability.md** — reference design for the queue +
+  metrics + autoscaling arc, phased so it can be implemented across sessions.
 
 ## Repository layout
 

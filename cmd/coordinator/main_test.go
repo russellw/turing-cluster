@@ -72,37 +72,3 @@ func TestSearchN2FindsBusyBeaver2(t *testing.T) {
 		t.Error("no halting machines found")
 	}
 }
-
-func TestSpaceSize(t *testing.T) {
-	if got := spaceSize(2); got != 20736 {
-		t.Errorf("spaceSize(2) = %v, want 20736", got)
-	}
-}
-
-func TestEnumerateProducesCompleteDistinctTables(t *testing.T) {
-	alphabet, states := buildAlphabet(2)
-	ch := make(chan *turing.Program)
-	go enumerate(states, alphabet, ch)
-
-	count := 0
-	seen := make(map[string]bool)
-	for p := range ch {
-		count++
-		// Every table must define all 2*states cells and be loadable
-		// (no duplicate/missing rules).
-		if len(p.Rules) != 4 {
-			t.Fatalf("program has %d rules, want 4", len(p.Rules))
-		}
-		if _, err := turing.New(p, 0); err != nil {
-			t.Fatalf("enumerated invalid program: %v", err)
-		}
-		key, _ := json.Marshal(p.Rules)
-		if seen[string(key)] {
-			t.Fatalf("duplicate program enumerated: %s", key)
-		}
-		seen[string(key)] = true
-	}
-	if count != 20736 {
-		t.Errorf("enumerated %d programs, want 20736", count)
-	}
-}

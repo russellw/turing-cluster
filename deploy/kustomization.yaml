@@ -6,3 +6,8 @@ resources:
   - worker-deployment.yaml
   - worker-service.yaml
   - worker-hpa.yaml
+  # Redis (Phase 0): queue + champion state for the decoupled search.
+  # See docs/DESIGN-queue-observability.md.
+  - redis/configmap.yaml
+  - redis/service.yaml
+  - redis/statefulset.yaml
