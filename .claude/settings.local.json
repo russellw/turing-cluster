@@ -6,7 +6,8 @@
       "Bash(go run *)",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
-      "Bash(go version *)"
+      "Bash(go version *)",
+      "Bash(go vet *)"
     ]
   }
 }
