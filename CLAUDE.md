@@ -26,11 +26,13 @@ outward-facing.
 | Path | What it is |
 |------|------------|
 | `pkg/turing/` | Core 2-symbol Turing machine emulator (tape, transitions, snapshots) and built-in Busy Beaver programs |
+| `pkg/search/` | Transition-space enumeration as index-range Batches; decode indices→machines; fold outcomes into champions (Tally) |
+| `pkg/queue/` | Redis Streams work queue: batch enqueue, consumer-group reads + crash reclaim, outcome publish/collect |
 | `cmd/emulator/` | CLI that runs a built-in program locally |
-| `cmd/server/` | HTTP worker server (`POST /run`, `GET /healthz`) — runs as a K8s pod |
-| `cmd/coordinator/` | Brute-force Busy Beaver search driver that fans candidates out across workers |
-| `deploy/` | Kubernetes manifests (Kustomize root: `kubectl apply -k deploy/`) |
-| `Dockerfile` | Two-stage build → static binary on `scratch` |
+| `cmd/server/` | Worker: HTTP server (`POST /run`, `GET /healthz`, `GET /metrics`) + queue consumer (gated on `REDIS_ADDR`) |
+| `cmd/coordinator/` | Busy Beaver search driver — queue mode (`-redis`) or direct HTTP fan-out |
+| `deploy/` | K8s manifests. Root kustomize = core stack; `deploy/monitoring/` and `keda-scaledobject.yaml` applied after their Helm add-ons |
+| `Dockerfile` | Two-stage build → static binary on `scratch`; `ARG CMD` builds worker or coordinator |
 
 Module: `github.com/russellwallace/turing-cluster` (Go 1.24 — bumped from 1.22
 when the Redis client was added for the queue path).

@@ -1,6 +1,7 @@
 # Design: Queue-Decoupled Search + Observability
 
-Status: **proposed** (not yet implemented). Author's intent captured 2026-07-06.
+Status: **implemented** (phases 0–6 all ✅ done, 2026-07-06). See the per-phase
+notes in §7 for what shipped and how each was verified.
 
 This document is the reference design for the "queue + metrics" arc discussed in
 [REPORT.md](../REPORT.md) Next Steps #1, #2, #3, and #5. It exists so the work
@@ -292,9 +293,15 @@ sessions. Ordered so infra can be validated before app code depends on it.
   kubectl apply -f deploy/keda-scaledobject.yaml
   ```
 
-- **Phase 6 — docs.** Update REPORT.md (move items 1–3, 5 from Next Steps to
-  Built), README.md architecture section + add the Grafana screenshot, and flip
-  this doc's status to *implemented*.
+- **Phase 6 — docs. ✅ done 2026-07-06.** REPORT.md gained sections 6–8 (work
+  queue, observability, autoscaling), an updated manifest table, and a rewritten
+  Next Steps (queue/observability/autoscaling moved to Done; symmetry reduction,
+  durable records, and CI/CD remain). README.md's architecture diagram, ops
+  story, tech stack, and quick-start now describe the queue-decoupled + KEDA +
+  Prometheus/Grafana system, and this doc's status is flipped to *implemented*.
+  The one artifact that needs a human: the Grafana dashboard **screenshot**
+  (headless here) — port-forward `kube-prometheus-stack-grafana`, dashboard
+  "Turing Cluster — Busy Beaver Search", and drop the PNG into README.
 
 ---
 

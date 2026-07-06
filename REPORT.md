@@ -97,10 +97,12 @@ readiness probes.
 
 Two-stage build:
 
-1. **Builder** — `golang:1.22-alpine`; compiles with `CGO_ENABLED=0` and
-   `-trimpath` for a fully static, reproducible binary.
+1. **Builder** — `golang:1.24-alpine`; compiles with `CGO_ENABLED=0` and
+   `-trimpath` for a fully static, reproducible binary. A build `ARG CMD`
+   selects the target (`server` or `coordinator`), so one Dockerfile produces
+   both images.
 2. **Runtime** — `scratch` (empty base image); contains only the binary.
-   Resulting image is approximately 7 MB with no OS attack surface.
+   Resulting image is approximately 16 MB with no OS attack surface.
 
 ---
 
@@ -109,10 +111,18 @@ Two-stage build:
 | File | Resource | Purpose |
 |------|----------|---------|
 | `namespace.yaml` | Namespace `turing-cluster` | Isolates all resources |
-| `worker-deployment.yaml` | Deployment | Runs 3 worker replicas with rolling updates |
-| `worker-service.yaml` | Service (ClusterIP) | Internal DNS name for workers |
-| `worker-hpa.yaml` | HorizontalPodAutoscaler | Scales 2–10 pods on CPU utilisation |
-| `kustomization.yaml` | Kustomize root | `kubectl apply -k deploy/` deploys everything |
+| `worker-deployment.yaml` | Deployment | Worker pods (rolling updates); also consume the queue |
+| `worker-service.yaml` | Service (ClusterIP) | Internal DNS name for workers; fronts `/metrics` |
+| `redis/*` | StatefulSet + Service + ConfigMap | Redis queue + champion state, AOF-persisted on a PVC |
+| `coordinator-job.yaml` | Job | Run-once search driver (applied on demand) |
+| `keda-scaledobject.yaml` | KEDA ScaledObject | Autoscale workers 1–10 on queue lag |
+| `monitoring/*` | ServiceMonitors, Pushgateway, dashboard | Prometheus/Grafana wiring |
+| `kustomization.yaml` | Kustomize root | `kubectl apply -k deploy/` deploys the core stack |
+
+The KEDA and monitoring manifests depend on operator CRDs installed via Helm, so
+they live outside the root kustomize and are applied after those installs. The
+CPU HorizontalPodAutoscaler that originally scaled on CPU was **retired** once
+work became queue-driven — CPU is no longer a meaningful signal (see §8).
 
 **Deployment configuration:**
 - Rolling update: max 1 unavailable, max 1 surge — zero downtime deploys.
@@ -123,13 +133,6 @@ Two-stage build:
 - Liveness probe: `/healthz` every 10s, failure threshold 3.
 - Readiness probe: `/healthz` every 5s, failure threshold 2 (pod pulled from
   service rotation faster than it is killed).
-
-**HPA configuration:**
-- Target: 70% average CPU utilisation (workers pin a core while running a
-  machine, so CPU is a reliable signal).
-- Scale-up: add up to 2 pods per minute, stabilisation window 30s.
-- Scale-down: remove 1 pod per 2 minutes, stabilisation window 5 minutes —
-  conservative, to protect long-running machines that are mid-execution.
 
 **Security hardening (all containers):**
 - `runAsNonRoot: true`, `runAsUser: 65534` (nobody).
@@ -185,6 +188,74 @@ natural next step before n≥3 becomes feasible.
 
 ---
 
+### 6. Distributed Search over a Work Queue (`pkg/search`, `pkg/queue`)
+
+The coordinator no longer has to fan work out over HTTP itself. A Redis Streams
+queue decouples it from the workers so they scale independently.
+
+**`pkg/search`** is the enumeration made distributable. It treats the transition
+space as a mixed-radix number and exposes it as `Batch{Start, Count, States}`
+index ranges. `Enumerate` partitions the space into batches; `Programs`/`Expand`
+decode a range into machines. Outcomes fold into a `Tally` (S(n), σ(n), counts)
+**by max** — an idempotent operation, which is the property that makes
+at-least-once queue delivery safe: reprocessing a redelivered batch can only
+recompute the same maxima. Unit tests reproduce the full n=2 space (20,736
+distinct machines → S(2)=6, σ(2)=4) purely in-process.
+
+**`pkg/queue`** wraps a Redis client with the domain operations:
+- **`jobs` stream** — the coordinator enqueues one message per batch; workers
+  consume via the `workers` consumer group (`XREADGROUP`). Batches (not
+  individual machines) keep the queue short while per-message work stays
+  meaningful.
+- **Crash recovery** — `XAUTOCLAIM` reclaims batches a dead worker left pending,
+  and a worker acks a job only *after* its outcome is durably on the results
+  stream — so no work is silently lost.
+- **`results` stream** — workers publish a per-batch outcome; the coordinator
+  reads them, folds the global champions, and mirrors high-water marks to the
+  **`champions` hash**.
+
+Redis itself runs as a StatefulSet with AOF persistence on a PVC, so queued work
+and champion state survive a restart. Verified fully in-cluster (coordinator Job
++ worker fleet + Redis): S(2)=6, σ(2)=4 with zero pending jobs at the end.
+
+---
+
+### 7. Observability (`/metrics`, Prometheus, Grafana)
+
+Every worker exposes Prometheus `/metrics` on its HTTP port: `turing_steps_total`
+(rate → steps/sec), `turing_candidates_total`, `turing_halts_total`, a
+`turing_batch_duration_seconds` histogram, and a `turing_worker_busy` gauge. A
+**ServiceMonitor** tells the Prometheus Operator to scrape them.
+
+The coordinator is a run-once Job, so its own endpoint dies with it; it therefore
+**pushes** its final summary (champions, batches, backlog) to a **Pushgateway** —
+the standard pattern for batch-job metrics — which is scraped continuously. The
+observability stack is **kube-prometheus-stack** (Prometheus + Grafana +
+operator); a Grafana dashboard ships as a ConfigMap and is auto-imported by the
+sidecar. Verified: all scrape targets healthy, champions queryable in Prometheus,
+dashboard imported at `/d/turing-cluster/`.
+
+---
+
+### 8. Autoscaling on Queue Lag (KEDA)
+
+The original CPU HorizontalPodAutoscaler was **retired**: once work is queued,
+CPU is no longer the honest signal — a fleet idle between searches reads low CPU
+even with a huge backlog waiting. **KEDA** replaces it, scaling the worker
+Deployment 1–10 on the Redis stream's *lag* (undelivered entries in the `workers`
+group) via its `redis-streams` scaler — KEDA reads Redis directly, so the
+autoscaler needs no Prometheus dependency.
+
+Scale-down is now safe without the old conservative window: a terminated worker
+finishes its in-flight batch (graceful drain) and any undelivered/unacked work
+stays on the stream to be reclaimed. Verified on a live 500k-entry backlog —
+workers scaled **1 → 5 → 10** as KEDA saw the lag, then back to **1** once drained.
+
+The full design and per-phase verification live in
+**[docs/DESIGN-queue-observability.md](docs/DESIGN-queue-observability.md)**.
+
+---
+
 ## How to Run
 
 See **[README.md](README.md)** for local and Kubernetes quick-start commands.
@@ -200,20 +271,23 @@ curl -X POST http://localhost:8080/run \
 
 ## Next Steps
 
-1. ~~**Coordinator**~~ — *done (first cut).* See `cmd/coordinator` above.
-   Remaining work: symmetry reduction / normal-form enumeration so n≥3 is
-   feasible, resumable search state, and re-queuing non-halted candidates for
-   more steps rather than discarding them.
+**Done since the first cut:**
+- ~~**Work queue**~~ — Redis Streams decouples the coordinator from the workers,
+  with consumer-group delivery and crash reclaim (§6).
+- ~~**Observability**~~ — Prometheus `/metrics`, ServiceMonitor scraping, a
+  Pushgateway for the run-once coordinator, and a Grafana dashboard (§7).
+- ~~**Autoscaling**~~ — KEDA scales workers on queue lag; the CPU HPA is retired
+  (§8).
+- ~~**Partial persistence**~~ — Redis (AOF on a PVC) already survives a restart
+  with queued work and champion state intact.
 
-2. **Work queue** — replace direct HTTP fan-out with a queue (e.g. Redis
-   Streams or Kubernetes Jobs) so the coordinator is not a bottleneck and
-   workers can be scaled independently of job submission rate.
+**Still open:**
+1. **Symmetry-reduced enumeration** — normal-form / symmetry breaking so n≥3
+   (~16.7M machines) becomes feasible; also resumable search state and re-queuing
+   non-halted candidates for more steps rather than discarding them.
 
-3. **Persistent storage** — write halting machine records and high-water-mark
-   snapshots to a database so a cluster restart does not lose progress.
+2. **Durable champion records** — write halting-machine records to a database
+   (not just the Redis `champions` hash) for a permanent, queryable history.
 
-4. **CI/CD** — GitHub Actions workflow to build, test, and push the Docker
-   image on every push to `main`, and update the image tag in the Deployment.
-
-5. **Observability** — Prometheus metrics endpoint (`/metrics`) exposing steps
-   per second, jobs completed, and queue depth; Grafana dashboard.
+3. **CI/CD** — GitHub Actions to build, test, and push the images on every push
+   to `main`, and bump the image tag in the Deployment.
