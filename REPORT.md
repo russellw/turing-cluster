@@ -187,40 +187,13 @@ natural next step before n≥3 becomes feasible.
 
 ## How to Run
 
-### Locally
+See **[README.md](README.md)** for local and Kubernetes quick-start commands.
+One additional low-level example — POSTing a raw job to a worker:
 
 ```bash
-# Run the CLI emulator
-go run ./cmd/emulator -program=bb4
-
-# Run with step-by-step trace
-go run ./cmd/emulator -program=bb2 -verbose
-
-# Run the HTTP server
-go run ./cmd/server -addr :8080
-
-# POST a job
 curl -X POST http://localhost:8080/run \
   -H 'Content-Type: application/json' \
   -d '{"program":{"name":"bb4","start_state":"A","rules":[...]},"max_steps":0}'
-```
-
-### In Kubernetes
-
-```bash
-# Build and push image
-docker build -t ghcr.io/russellwallace/turing-cluster/worker:latest .
-docker push ghcr.io/russellwallace/turing-cluster/worker:latest
-
-# Deploy
-kubectl apply -k deploy/
-
-# Watch pods come up
-kubectl get pods -n turing-cluster -w
-
-# Send a job to the service
-kubectl run -it --rm curl --image=curlimages/curl --restart=Never -n turing-cluster -- \
-  curl -X POST http://turing-worker/run -H 'Content-Type: application/json' -d '{...}'
 ```
 
 ---
