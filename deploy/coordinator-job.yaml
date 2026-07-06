@@ -1,0 +1,42 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: turing-coordinator
+  namespace: turing-cluster
+  labels:
+    app: turing-coordinator
+spec:
+  # A search runs to completion once; a Job (not a Deployment) models that.
+  # Delete and re-create to run another search:
+  #   kubectl -n turing-cluster delete job turing-coordinator --ignore-not-found
+  #   kubectl apply -f deploy/coordinator-job.yaml
+  backoffLimit: 2
+  completions: 1
+  template:
+    metadata:
+      labels:
+        app: turing-coordinator
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: coordinator
+          # Same image as the worker; overrides the entrypoint to run the
+          # coordinator binary instead of the server.
+          image: coordinator:latest
+          imagePullPolicy: Never
+          args:
+            - "-redis=turing-redis:6379"
+            - "-states=2"
+            - "-batch=500"
+            - "-max-steps=1000"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

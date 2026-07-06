@@ -220,10 +220,23 @@ sessions. Ordered so infra can be validated before app code depends on it.
   expand to the same sequence as the flat enumeration; `go build/vet/test ./...`
   all green.
 
-- **Phase 2 — queue path.** Add Redis client; worker consumer loop; coordinator
-  producer + result sink. Gate on `REDIS_ADDR` (unset = today's HTTP behavior,
-  so nothing regresses). Verify end-to-end **locally** with `docker run redis`:
-  coordinator + one worker still yield S(2)=6, σ(2)=4. Then in-cluster.
+- **Phase 2 — queue path. ✅ done 2026-07-06.** Added `pkg/queue` (go-redis
+  wrapper: streams `jobs`/`results`, group `workers`, `champions` hash; batch
+  enqueue, `XREADGROUP`+`XAUTOCLAIM` consume, ack, outcome publish/read, champion
+  mirror). `cmd/server` gained a consumer loop gated on `REDIS_ADDR` (unset =
+  HTTP-only, no regression) that finishes its in-flight batch on SIGTERM.
+  `cmd/coordinator` gained a `-redis` producer + result-sink mode alongside the
+  HTTP one. Dockerfile parameterised by `ARG CMD` to build both binaries;
+  `deploy/worker-deployment.yaml` sets `REDIS_ADDR`; added
+  `deploy/coordinator-job.yaml`. Go bumped 1.22→1.24 by the redis dep.
+  Verified twice: (a) worker+coordinator binaries against the in-cluster Redis
+  via port-forward, and (b) **fully in-cluster** — coordinator Job + 3 worker
+  pods + Redis StatefulSet — both yielding S(2)=6, σ(2)=4 over 20,736 machines
+  (9,784 halting), with the `champions` hash mirrored and 0 pending jobs.
+  Not yet exercised: the `XAUTOCLAIM` reclaim path (happy-path run has no crashes)
+  and cross-run isolation beyond the results-cursor guard (a run-id tag is the
+  refinement). `coordinator-job.yaml` is applied on demand, not in the kustomize
+  root (a run-once Job doesn't belong in the base).
 
 - **Phase 3 — `/metrics`.** Add `client_golang`, register the §5 metrics on both
   binaries. Verify: `curl :8080/metrics` shows counters advancing during a run.

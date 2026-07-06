@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,26 +31,15 @@ import (
 
 func main() {
 	var (
-		workersCSV  = flag.String("workers", "http://localhost:8080", "comma-separated worker base URLs")
+		workersCSV  = flag.String("workers", "http://localhost:8080", "comma-separated worker base URLs (HTTP fan-out mode)")
+		redisAddr   = flag.String("redis", os.Getenv("REDIS_ADDR"), "redis host:port; if set, distribute work via the queue instead of HTTP fan-out")
+		batchSize   = flag.Int64("batch", envInt64("BATCH_SIZE", 500), "machines per queued batch (queue mode)")
 		states      = flag.Int("states", 2, "number of machine states to enumerate")
 		maxSteps    = flag.Int64("max-steps", 1000, "per-candidate step limit; machines that don't halt within it are treated as non-halters")
-		concurrency = flag.Int("concurrency", 16, "number of in-flight requests")
+		concurrency = flag.Int("concurrency", 16, "number of in-flight requests (HTTP fan-out mode)")
 		force       = flag.Bool("force", false, "run even if the search space exceeds the safety threshold")
 	)
 	flag.Parse()
-
-	workers := splitWorkers(*workersCSV)
-	if len(workers) == 0 {
-		fatal("no workers configured")
-	}
-
-	cfg := Config{
-		Workers:     workers,
-		States:      *states,
-		MaxSteps:    *maxSteps,
-		Concurrency: *concurrency,
-		Client:      &http.Client{Timeout: 30 * time.Second},
-	}
 
 	// Guard against accidentally enumerating an astronomically large space.
 	total := search.SpaceSizeFloat(*states)
@@ -59,22 +49,49 @@ func main() {
 			*states, total, threshold))
 	}
 
-	slog.Info("starting search",
-		"states", *states,
-		"candidates", total,
-		"workers", len(workers),
-		"concurrency", *concurrency,
-		"max_steps", *maxSteps,
+	var (
+		result SearchResult
+		err    error
+		start  = time.Now()
 	)
-
-	start := time.Now()
-	result, err := Search(context.Background(), cfg)
+	if *redisAddr != "" {
+		slog.Info("starting queue search",
+			"states", *states, "candidates", total,
+			"redis", *redisAddr, "batch", *batchSize, "max_steps", *maxSteps,
+		)
+		result, err = RunQueueSearch(context.Background(), *redisAddr, *states, uint64(*batchSize), *maxSteps)
+	} else {
+		workers := splitWorkers(*workersCSV)
+		if len(workers) == 0 {
+			fatal("no workers configured")
+		}
+		cfg := Config{
+			Workers:     workers,
+			States:      *states,
+			MaxSteps:    *maxSteps,
+			Concurrency: *concurrency,
+			Client:      &http.Client{Timeout: 30 * time.Second},
+		}
+		slog.Info("starting search",
+			"states", *states, "candidates", total,
+			"workers", len(workers), "concurrency", *concurrency, "max_steps", *maxSteps,
+		)
+		result, err = Search(context.Background(), cfg)
+	}
 	if err != nil {
 		fatal(err.Error())
 	}
-	elapsed := time.Since(start)
 
-	printReport(os.Stdout, *states, result, elapsed)
+	printReport(os.Stdout, *states, result, time.Since(start))
+}
+
+func envInt64(key string, fallback int64) int64 {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return n
+		}
+	}
+	return fallback
 }
 
 // Config parameterises a search.

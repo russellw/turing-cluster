@@ -8,14 +8,18 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
+	"github.com/russellwallace/turing-cluster/pkg/queue"
 	"github.com/russellwallace/turing-cluster/pkg/turing"
 )
 
 func main() {
 	addr := flag.String("addr", envOr("PORT", "8080"), "listen address (port or host:port)")
+	redisAddr := flag.String("redis", os.Getenv("REDIS_ADDR"), "redis host:port; if set, also consume batch jobs from the queue")
+	stepLimit := flag.Int64("step-limit", envInt64("STEP_LIMIT", 1000), "per-candidate step limit for queued batches")
 	flag.Parse()
 
 	// Normalize: bare port number → ":port"
@@ -43,12 +47,39 @@ func main() {
 		}
 	}()
 
+	// Optionally consume batch jobs from the queue (Phase 2). When -redis/
+	// REDIS_ADDR is unset the worker is HTTP-only, exactly as before.
+	consumerCtx, stopConsumer := context.WithCancel(context.Background())
+	var consumerDone chan struct{}
+	if *redisAddr != "" {
+		qc := queue.Dial(*redisAddr)
+		defer qc.Close()
+		consumerDone = make(chan struct{})
+		go func() {
+			defer close(consumerDone)
+			if err := runConsumer(consumerCtx, qc, *stepLimit); err != nil {
+				slog.Error("queue consumer exited", "err", err)
+			}
+		}()
+		slog.Info("queue consumer enabled", "redis", *redisAddr)
+	}
+
 	// Graceful shutdown on SIGTERM / SIGINT (Kubernetes sends SIGTERM).
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGTERM, syscall.SIGINT)
 	<-quit
 
 	slog.Info("shutting down")
+	// Stop taking new batches; the in-flight batch finishes on its own context.
+	stopConsumer()
+	if consumerDone != nil {
+		select {
+		case <-consumerDone:
+		case <-time.After(30 * time.Second):
+			slog.Warn("consumer did not stop within drain window")
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
@@ -144,6 +175,15 @@ func (sw *statusWriter) WriteHeader(code int) {
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+func envInt64(key string, fallback int64) int64 {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return n
+		}
 	}
 	return fallback
 }

@@ -32,7 +32,8 @@ outward-facing.
 | `deploy/` | Kubernetes manifests (Kustomize root: `kubectl apply -k deploy/`) |
 | `Dockerfile` | Two-stage build → static binary on `scratch` |
 
-Module: `github.com/russellwallace/turing-cluster` (Go 1.22).
+Module: `github.com/russellwallace/turing-cluster` (Go 1.24 — bumped from 1.22
+when the Redis client was added for the queue path).
 
 ## Common commands
 

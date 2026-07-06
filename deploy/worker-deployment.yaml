@@ -42,6 +42,12 @@ spec:
           env:
             - name: PORT
               value: "8080"
+            # Phase 2: consume batch jobs from the queue in addition to serving
+            # POST /run. The headless Service name resolves to the Redis pod.
+            - name: REDIS_ADDR
+              value: "turing-redis:6379"
+            - name: STEP_LIMIT
+              value: "1000"
           resources:
             requests:
               # Workers are CPU-bound (running TM steps); give each a meaningful
