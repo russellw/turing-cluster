@@ -5,9 +5,14 @@ resources:
   - namespace.yaml
   - worker-deployment.yaml
   - worker-service.yaml
-  - worker-hpa.yaml
   # Redis (Phase 0): queue + champion state for the decoupled search.
   # See docs/DESIGN-queue-observability.md.
   - redis/configmap.yaml
   - redis/service.yaml
   - redis/statefulset.yaml
+
+# NOT in this root kustomize (they depend on operator CRDs installed via Helm):
+#   deploy/keda-scaledobject.yaml   — autoscale workers on queue lag (Phase 5,
+#     supersedes the retired worker-hpa.yaml CPU autoscaler)
+#   deploy/monitoring/              — Prometheus/Grafana wiring (Phase 4)
+#   deploy/coordinator-job.yaml     — run-once search driver, applied on demand

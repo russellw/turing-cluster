@@ -1,0 +1,34 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: turing-worker
+  namespace: turing-cluster
+  labels:
+    app: turing-worker
+spec:
+  scaleTargetRef:
+    name: turing-worker
+  # Keep one worker for HTTP /run and continuous /metrics; burst to 10 on backlog.
+  # (pollingInterval/cooldownPeriod are omitted: they only apply to scale-to-zero;
+  # at minReplicaCount=1 the HPA behavior below governs scale-down.)
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          # Scale-down is safe now: a terminated worker finishes its in-flight
+          # batch (graceful drain) and any undelivered/unacked work stays on the
+          # stream to be reclaimed — so we don't need the old HPA's conservative
+          # window to protect long-running machines.
+          stabilizationWindowSeconds: 30
+  triggers:
+    - type: redis-streams
+      metadata:
+        address: turing-redis.turing-cluster.svc.cluster.local:6379
+        stream: jobs
+        consumerGroup: workers
+        # Target ~15 unread (lag) entries per replica; scale up past that,
+        # down toward min when the backlog clears.
+        lagCount: "15"
+        activationLagCount: "1"

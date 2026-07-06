@@ -73,10 +73,11 @@ Key properties this buys us, each mapping to a K8s skill:
   Grafana dashboard as a ConfigMap. *Alternative:* hand-rolled Prometheus +
   Grafana Deployments if we want to avoid Helm and keep everything in Kustomize.
 
-**Decisions (resolved in Phase 4):** kube-prometheus-stack (Helm) — done;
-coordinator stays a run-once `Job`, with its metrics pushed to a **Pushgateway**
-rather than scraped. **Still open (Phase 5):** KEDA vs Prometheus Adapter for the
-queue-depth autoscaler. Defaults above.
+**Decisions (all resolved):** kube-prometheus-stack (Helm, Phase 4);
+coordinator stays a run-once `Job` with its metrics pushed to a **Pushgateway**
+(Phase 4); and **KEDA** (not Prometheus Adapter) drives queue-depth autoscaling
+via its `redis-streams` lag scaler (Phase 5) — KEDA reads Redis directly, so the
+autoscaler needs no Prometheus dependency.
 
 ---
 
@@ -272,9 +273,24 @@ sessions. Ordered so infra can be validated before app code depends on it.
   **Decision recorded:** worker metrics are scraped (always-on, drive the
   dashboard); the run-once coordinator uses the Pushgateway batch-job pattern.
 
-- **Phase 5 — KEDA.** Install KEDA; add the ScaledObject; remove/demote the CPU
-  HPA. Verify: enqueue a large-n batch load and watch replicas scale up on lag
-  and back down as the backlog drains.
+- **Phase 5 — KEDA. ✅ done 2026-07-06.** Installed KEDA 2.20 (Helm, `keda` ns).
+  Added `deploy/keda-scaledobject.yaml`: a `redis-streams` trigger on the `jobs`
+  stream / `workers` group **lag** (`lagCount: 15`), min 1 / max 10. Retired the
+  CPU HPA — deleted `deploy/worker-hpa.yaml`, removed it from the root kustomize,
+  and deleted the live resource — because CPU is no longer the honest signal once
+  work is queue-driven (design §5). KEDA now owns the deployment's scaling via its
+  own `keda-hpa-turing-worker`. Verified the full cycle on a live 500k-entry
+  backlog: KEDA saw the lag and scaled **1 → 5 → 10** pods, drained it, then
+  scaled back to **1** once clear. Scale-down is safe here (unlike the old
+  conservative HPA) because a terminated worker drains its in-flight batch and
+  leaves undelivered/unacked work on the stream to be reclaimed. Applied after the
+  Helm install (needs KEDA CRDs), like the monitoring manifests.
+
+  ```bash
+  helm repo add kedacore https://kedacore.github.io/charts && helm repo update
+  helm upgrade --install keda kedacore/keda -n keda --create-namespace --wait
+  kubectl apply -f deploy/keda-scaledobject.yaml
+  ```
 
 - **Phase 6 — docs.** Update REPORT.md (move items 1–3, 5 from Next Steps to
   Built), README.md architecture section + add the Grafana screenshot, and flip
