@@ -34,6 +34,12 @@ spec:
             - "-states=2"
             - "-batch=500"
             - "-max-steps=1000"
+          ports:
+            # Prometheus /metrics, served only while the search runs. Reliably
+            # scraping a run-once Job needs a Pushgateway (Phase 4 decision).
+            - name: metrics
+              containerPort: 2112
+              protocol: TCP
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

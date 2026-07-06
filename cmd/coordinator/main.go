@@ -34,6 +34,7 @@ func main() {
 		workersCSV  = flag.String("workers", "http://localhost:8080", "comma-separated worker base URLs (HTTP fan-out mode)")
 		redisAddr   = flag.String("redis", os.Getenv("REDIS_ADDR"), "redis host:port; if set, distribute work via the queue instead of HTTP fan-out")
 		batchSize   = flag.Int64("batch", envInt64("BATCH_SIZE", 500), "machines per queued batch (queue mode)")
+		metricsAddr = flag.String("metrics-addr", envOr("METRICS_ADDR", ":2112"), "address to serve Prometheus /metrics on in queue mode; empty to disable")
 		states      = flag.Int("states", 2, "number of machine states to enumerate")
 		maxSteps    = flag.Int64("max-steps", 1000, "per-candidate step limit; machines that don't halt within it are treated as non-halters")
 		concurrency = flag.Int("concurrency", 16, "number of in-flight requests (HTTP fan-out mode)")
@@ -55,6 +56,9 @@ func main() {
 		start  = time.Now()
 	)
 	if *redisAddr != "" {
+		if *metricsAddr != "" {
+			serveMetrics(*metricsAddr)
+		}
 		slog.Info("starting queue search",
 			"states", *states, "candidates", total,
 			"redis", *redisAddr, "batch", *batchSize, "max_steps", *maxSteps,
@@ -90,6 +94,13 @@ func envInt64(key string, fallback int64) int64 {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return n
 		}
+	}
+	return fallback
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
 	}
 	return fallback
 }

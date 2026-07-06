@@ -68,7 +68,12 @@ func runConsumer(ctx context.Context, qc *queue.Client, stepLimit int64) error {
 // one) so a batch already picked up completes and acks even during shutdown; a
 // job whose outcome fails to publish is left un-acked and will be reclaimed.
 func processJob(qc *queue.Client, job queue.Job, stepLimit int64) {
+	start := time.Now()
+	workerBusy.Set(1)
+	defer workerBusy.Set(0)
+
 	var tally search.Tally
+	var batchSteps int64
 	search.Expand(job.Batch, func(_ uint64, p *turing.Program) bool {
 		m, err := turing.New(p, stepLimit)
 		if err != nil {
@@ -79,8 +84,14 @@ func processJob(qc *queue.Client, job queue.Job, stepLimit int64) {
 		_ = m.Run() // step-limit error is the expected non-halter signal
 		snap := m.Snapshot()
 		tally.Add(p, m.Halted(), snap.Steps, search.CountOnes(snap.Tape))
+		batchSteps += snap.Steps
 		return true
 	})
+
+	candidatesTotal.Add(float64(tally.Total))
+	haltsTotal.Add(float64(tally.Halted))
+	stepsTotal.Add(float64(batchSteps))
+	batchDuration.Observe(time.Since(start).Seconds())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -90,5 +101,7 @@ func processJob(qc *queue.Client, job queue.Job, stepLimit int64) {
 	}
 	if err := qc.Ack(ctx, job.ID); err != nil {
 		slog.Error("ack failed", "id", job.ID, "err", err)
+		return
 	}
+	batchesProcessedTotal.Inc()
 }

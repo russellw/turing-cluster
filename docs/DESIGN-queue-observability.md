@@ -238,8 +238,20 @@ sessions. Ordered so infra can be validated before app code depends on it.
   refinement). `coordinator-job.yaml` is applied on demand, not in the kustomize
   root (a run-once Job doesn't belong in the base).
 
-- **Phase 3 — `/metrics`.** Add `client_golang`, register the §5 metrics on both
-  binaries. Verify: `curl :8080/metrics` shows counters advancing during a run.
+- **Phase 3 — `/metrics`. ✅ done 2026-07-06.** Added `client_golang`. Worker
+  exposes `GET /metrics` on the existing HTTP port (8080) with the §5 counters +
+  `turing_batch_duration_seconds` histogram + `turing_worker_busy` gauge,
+  instrumented in `processJob`. Coordinator serves `/metrics` on `:2112`
+  (`-metrics-addr`, queue mode only) with enqueued/acked/`jobs_pending` and the
+  champion gauges, instrumented in `RunQueueSearch`. No new worker port was
+  needed — `/metrics` rides the existing port, which simplifies the Phase 4
+  ServiceMonitor. Verified in-cluster: a worker's counters advanced over a search
+  (batches/candidates/halts/steps, histogram count=16, busy toggled); and with
+  workers scaled to 0 the coordinator showed `batches_enqueued=jobs_pending=208`,
+  then champion gauges climbed to S=6/σ=4 as the fleet drained. **Caveat:** the
+  coordinator is a run-once Job, so its `/metrics` is only live during a run —
+  reliably capturing it needs a Pushgateway (or a long-lived coordinator), which
+  Phase 4 must decide. The always-on, dashboard-driving signal is the worker's.
 
 - **Phase 4 — Prometheus + Grafana.** Install kube-prometheus-stack; add
   ServiceMonitors + dashboard ConfigMap. Verify: targets UP in Prometheus; the

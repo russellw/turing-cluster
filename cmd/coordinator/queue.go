@@ -39,6 +39,8 @@ func RunQueueSearch(ctx context.Context, redisAddr string, states int, batchSize
 			return SearchResult{}, fmt.Errorf("enqueue batch @%d: %w", b.Start, err)
 		}
 	}
+	batchesEnqueued.Add(float64(len(batches)))
+	jobsPending.Set(float64(len(batches)))
 	slog.Info("enqueued batches", "batches", len(batches), "batch_size", batchSize)
 
 	var result SearchResult
@@ -54,6 +56,10 @@ func RunQueueSearch(ctx context.Context, redisAddr string, states int, batchSize
 			completed++
 		}
 		if len(outcomes) > 0 {
+			batchesAcked.Add(float64(len(outcomes)))
+			jobsPending.Set(float64(len(batches) - completed))
+			championSteps.Set(float64(result.StepChampion.Steps))
+			championSigma.Set(float64(result.OnesChampion.Ones))
 			slog.Info("progress", "completed_batches", completed, "total_batches", len(batches), "halted", result.Halted)
 		}
 	}
