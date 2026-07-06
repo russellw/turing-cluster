@@ -7,7 +7,15 @@
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
       "Bash(go version *)",
-      "Bash(go vet *)"
+      "Bash(go vet *)",
+      "Bash(kubectl apply *)",
+      "Bash(go mod *)",
+      "Bash(docker build *)",
+      "Bash(kind load *)",
+      "Bash(helm repo *)",
+      "Bash(helm upgrade *)",
+      "Bash(kubectl kustomize *)",
+      "Bash(git restore *)"
     ]
   }
 }
