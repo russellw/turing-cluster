@@ -140,6 +140,51 @@ Two-stage build:
 
 ---
 
+### 5. Coordinator (`cmd/coordinator`)
+
+The first component that makes the workers act as a *cluster*: a brute-force
+Busy Beaver search driver. It enumerates every candidate machine, fans them out
+to the worker fleet over `POST /run`, and reports the champions.
+
+**Enumeration** — for an n-state, 2-symbol machine each of the `2n`
+`(state, symbol)` cells is assigned a transition drawn from an alphabet of
+`write × move × next` = `2 · 2 · (n+1)` possibilities. A mixed-radix odometer
+walks the full space, streaming complete transition tables. Because every cell
+is defined, there are no missing-rule errors; machines that fail to halt simply
+hit the step limit and are counted as non-halters. For n=2 the space is
+`12⁴ = 20,736` machines.
+
+**Fan-out** — `-concurrency` goroutines pull candidates and round-robin them
+across the workers listed in `-workers` (comma-separated base URLs). Each
+worker's returned snapshot is triaged: `Steps` gives the running time and the
+non-blank tape-cell count gives σ. Transport-level failures abort the search;
+machine-level "step limit reached" is expected and ignored.
+
+**Champions** — the search reports S(n) (most steps before halting) and σ(n)
+(most 1s left on the tape), plus the winning transition table.
+
+**Safety** — a `-force`-gated threshold refuses search spaces above 10⁷
+machines, so the naive full enumeration can't be launched against n≥3 by
+accident (n=3 is ~16.7M machines and needs symmetry reduction first).
+
+Verified end-to-end against a live worker: all 20,736 n=2 machines evaluated
+(9,784 halting), yielding **S(2) = 6** and **σ(2) = 4** — the known busy beaver
+values. `main_test.go` reproduces this against an in-process `httptest` worker.
+
+```bash
+# Against a local worker on :8080
+go run ./cmd/coordinator -workers=http://localhost:8080 -states=2
+
+# Against the in-cluster Service
+go run ./cmd/coordinator -workers=http://turing-worker -states=2
+```
+
+This enumerates the *full* transition space with no symmetry reduction, so it
+is only practical for very small n. Normal-form / symmetry breaking is the
+natural next step before n≥3 becomes feasible.
+
+---
+
 ## How to Run
 
 ### Locally
@@ -182,10 +227,10 @@ kubectl run -it --rm curl --image=curlimages/curl --restart=Never -n turing-clus
 
 ## Next Steps
 
-1. **Coordinator** — a pod that accepts a Busy Beaver search specification
-   (number of states/symbols, search range), fans out candidate machines to
-   workers via `POST /run` with a step limit, collects snapshots, and either
-   records halting machines or re-queues non-halted ones for more steps.
+1. ~~**Coordinator**~~ — *done (first cut).* See `cmd/coordinator` above.
+   Remaining work: symmetry reduction / normal-form enumeration so n≥3 is
+   feasible, resumable search state, and re-queuing non-halted candidates for
+   more steps rather than discarding them.
 
 2. **Work queue** — replace direct HTTP fan-out with a queue (e.g. Redis
    Streams or Kubernetes Jobs) so the coordinator is not a bottleneck and
