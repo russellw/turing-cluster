@@ -45,6 +45,11 @@ queue's backlog; Prometheus and Grafana watch the whole thing.
   direct HTTP fan-out), reporting the Busy Beaver champions.
 - **`cmd/emulator`** — a CLI for running built-in programs locally.
 
+The Grafana dashboard mid-search — the fleet scaled to 7 workers by KEDA,
+sustaining ~4M Turing-machine steps/sec across ~3K batches/sec:
+
+![Grafana dashboard during a Busy Beaver search](docs/images/grafana-dashboard.png)
+
 ## The Kubernetes & operations story
 
 This is where the project earns its keep:
